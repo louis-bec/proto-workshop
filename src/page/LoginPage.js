@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Button, Input, Card, Title3, makeStyles, shorthands } from '@fluentui/react-components';
+import { Button, Input, Card, Title3, makeStyles, shorthands, Text } from '@fluentui/react-components';
 
 const useStyles = makeStyles({
   root: {
@@ -26,17 +26,36 @@ export default function LoginPage() {
   const styles = useStyles();
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [mode, setMode] = React.useState('login');
+  const [error, setError] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
 
   const handleLogin = (e) => {
     e.preventDefault();
-    // TODO: Add authentication logic here
-    alert(`Logging in as ${username}`);
+    setLoading(true);
+    setError(null);
+    fetch(`http://localhost:4000/api/auth/${mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ username, password })
+    }).then(async r => {
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || 'Request failed');
+      }
+      return r.json();
+    }).then(() => {
+      window.location.href = '/';
+    }).catch(err => {
+      setError(err.message);
+    }).finally(() => setLoading(false));
   };
 
   return (
     <div className={styles.root}>
       <Card className={styles.card}>
-        <Title3>Login</Title3>
+        <Title3>{mode === 'login' ? 'Login' : 'Register'}</Title3>
         <form className={styles.form} onSubmit={handleLogin}>
           <Input
             type="text"
@@ -52,8 +71,14 @@ export default function LoginPage() {
             onChange={e => setPassword(e.target.value)}
             required
           />
-          <Button type="submit" appearance="primary">Login</Button>
+          {error && <Text role="alert" style={{ color: 'red' }}>{error}</Text>}
+          <Button type="submit" appearance="primary" disabled={loading}>
+            {loading ? 'Please wait...' : (mode === 'login' ? 'Login' : 'Create Account')}
+          </Button>
         </form>
+        <Button appearance="secondary" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
+          {mode === 'login' ? 'Need an account? Register' : 'Have an account? Login'}
+        </Button>
       </Card>
     </div>
   );

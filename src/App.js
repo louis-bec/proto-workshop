@@ -2,13 +2,32 @@
 
 import './App.css';
 import LoginPage from './page/LoginPage';
+import HomePage from './page/HomePage';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React from 'react';
 
-function App() {
-  return (
-    <div className="App">
-      <LoginPage />
-    </div>
-  );
+function RequireAuth({ children }) {
+  const [loading, setLoading] = React.useState(true);
+  const [authed, setAuthed] = React.useState(false);
+  React.useEffect(() => {
+    fetch('http://localhost:4000/api/me', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(() => { setAuthed(true); setLoading(false); })
+      .catch(() => { setAuthed(false); setLoading(false); });
+  }, []);
+  if (loading) return <div>Loading...</div>;
+  if (!authed) return <Navigate to="/login" replace />;
+  return children;
 }
 
-export default App;
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
