@@ -23,6 +23,15 @@ async function ensureSchema() {
     password_hash VARCHAR(100) NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
   );`);
+  await pool.query(`CREATE TYPE IF NOT EXISTS worklist_status AS ENUM ('draft','in_progress','done');`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS worklists (
+    id SERIAL PRIMARY KEY,
+    owner_id INTEGER REFERENCES app_users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    status worklist_status NOT NULL DEFAULT 'draft',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+  );`);
 }
 
 const app = express();
@@ -98,6 +107,80 @@ app.get('/api/me', async (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('token');
   res.json({ ok: true });
+});
+
+// --- Auth middleware helper ---
+async function requireUser(req, res, next) {
+  try {
+    const token = req.cookies.token || (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+    if (!token) return res.status(401).json({ error: 'unauthorized' });
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = { id: payload.sub, username: payload.username };
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+}
+
+// --- Worklist endpoints ---
+// List grouped by status
+app.get('/api/worklists', requireUser, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, status, created_at, updated_at FROM worklists WHERE owner_id = $1 ORDER BY id DESC', [req.user.id]);
+    res.json(result.rows);
+  } catch (e) {
+    console.error('List worklists error', e);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// Create new worklist (defaults to draft)
+app.post('/api/worklists', requireUser, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name required' });
+    const insert = await pool.query('INSERT INTO worklists (owner_id, name) VALUES ($1,$2) RETURNING id, name, status, created_at, updated_at', [req.user.id, name.trim()]);
+    res.status(201).json(insert.rows[0]);
+  } catch (e) {
+    console.error('Create worklist error', e);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// Update status or name
+app.patch('/api/worklists/:id', requireUser, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+    const fields = [];
+    const values = [];
+    let idx = 1;
+    if (req.body.name !== undefined) { fields.push(`name = $${idx++}`); values.push(req.body.name); }
+    if (req.body.status !== undefined) { fields.push(`status = $${idx++}`); values.push(req.body.status); }
+    if (!fields.length) return res.status(400).json({ error: 'no updates' });
+    values.push(req.user.id); // owner
+    values.push(id); // id
+    const sql = `UPDATE worklists SET ${fields.join(', ')}, updated_at = now() WHERE owner_id = $${idx++} AND id = $${idx} RETURNING id, name, status, created_at, updated_at`;
+    const result = await pool.query(sql, values);
+    if (!result.rows.length) return res.status(404).json({ error: 'not found' });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error('Update worklist error', e);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// Delete worklist
+app.delete('/api/worklists/:id', requireUser, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' });
+  await pool.query('DELETE FROM worklists WHERE owner_id = $1 AND id = $2', [req.user.id, id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Delete worklist error', e);
+    res.status(500).json({ error: 'internal error' });
+  }
 });
 
 ensureSchema().then(() => {
